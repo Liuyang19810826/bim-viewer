@@ -9,45 +9,48 @@
       <template #extra>
         <span class="close-btn" @click="viewerStore.selectComponent(null)">✕</span>
       </template>
-      <div class="component-summary">
-        <div class="component-name">{{ viewerStore.selectedComponent.name }}</div>
-        <div class="component-type">{{ viewerStore.selectedComponent.type }}</div>
-      </div>
-      <div class="property-list">
-        <div
-          v-for="prop in viewerStore.selectedComponent.properties"
-          :key="prop.key"
-          class="property-row"
-        >
-          <div class="property-key">{{ prop.key }}</div>
-          <div class="property-value">{{ formatValue(prop.value) }}</div>
+      <div class="property-scroll-body">
+        <div class="component-summary">
+          <div class="component-name">{{ viewerStore.selectedComponent.name }}</div>
+          <div class="component-type">{{ viewerStore.selectedComponent.type }}</div>
         </div>
-      </div>
 
-      <div class="component-controls">
-        <h4>图元显示设置</h4>
-        <label class="control-row">
-          <input
-            type="checkbox"
-            :checked="isHidden"
-            @change="toggleVisibility"
+        <div class="component-controls">
+          <h4>图元显示设置</h4>
+          <label class="control-row">
+            <input
+              type="checkbox"
+              :checked="isHidden"
+              @change="toggleVisibility"
+            />
+            <span>隐藏</span>
+          </label>
+
+          <TechSlider
+            :model-value="opacity"
+            label="透明度"
+            :min="0"
+            :max="1"
+            :step="0.01"
+            :display-value="Math.round(opacity * 100) + '%'"
+            @update:model-value="setOpacity"
           />
-          <span>隐藏</span>
-        </label>
 
-        <TechSlider
-          :model-value="opacity"
-          label="透明度"
-          :min="0"
-          :max="1"
-          :step="0.01"
-          :display-value="Math.round(opacity * 100) + '%'"
-          @update:model-value="setOpacity"
-        />
+          <div class="control-row color-row">
+            <span>渲染颜色</span>
+            <ColorPicker v-model="selectedColor" @update:model-value="setColor" />
+          </div>
+        </div>
 
-        <div class="control-row color-row">
-          <span>渲染颜色</span>
-          <ColorPicker v-model="selectedColor" @update:model-value="setColor" />
+        <div class="property-list">
+          <div
+            v-for="prop in viewerStore.selectedComponent.properties"
+            :key="prop.key"
+            class="property-row"
+          >
+            <div class="property-key">{{ prop.key }}</div>
+            <div class="property-value">{{ formatValue(prop.value) }}</div>
+          </div>
         </div>
       </div>
     </TechPanel>
@@ -124,6 +127,26 @@ function formatValue(value: string | number | boolean | null): string {
   z-index: 50;
 }
 
+.property-scroll-body {
+  max-height: calc(100vh - var(--header-height) - var(--status-height) - 220px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.property-scroll-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.property-scroll-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 3px;
+}
+
+.property-scroll-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
 .close-btn {
   font-size: 12px;
   color: var(--text-muted);
@@ -157,8 +180,6 @@ function formatValue(value: string | number | boolean | null): string {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: calc(100vh - var(--header-height) - var(--status-height) - 280px);
-  overflow-y: auto;
 }
 
 .property-row {

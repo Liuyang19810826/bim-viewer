@@ -12,7 +12,7 @@ import { MaterialReplacer } from './rendering/MaterialReplacer'
 import { EnvironmentBuilder } from './rendering/EnvironmentBuilder'
 import { PostProcessing } from './rendering/PostProcessing'
 import { PresetApplier } from './rendering/PresetApplier'
-import type { AppSettings, ComponentData, ModelInfo, ViewerMode, RoamingSpeed, ClipAxis, APIResponse, ComponentTreeItem, RenderPreset } from '@/types'
+import type { AppSettings, ComponentData, ModelInfo, ViewerMode, RoamingSpeed, ClipAxis, APIResponse, ComponentTreeItem, RenderPreset, FloorInfo } from '@/types'
 
 export interface BIMViewerOptions {
   container: HTMLElement
@@ -159,6 +159,7 @@ export class BIMViewer {
 
       viewer.setModelInfo(result.info)
       viewer.setModelLoaded(true)
+      viewer.setFloors(this.getFloors())
       viewer.setStatusMessage(`模型加载成功：${result.info.name}`)
       logs.add('模型加载', 'success', 'user', result.info.name)
 
@@ -331,6 +332,8 @@ export class BIMViewer {
     useViewerStore().selectComponent(null)
     useViewerStore().setModelLoaded(false)
     useViewerStore().setModelInfo(null)
+    useViewerStore().setFloors([])
+    useViewerStore().selectFloor(null)
     if (logAction) {
       useLogStore().add('模型清空', 'success', 'user')
       useViewerStore().setStatusMessage('模型已清空')
@@ -627,6 +630,62 @@ export class BIMViewer {
 
   setComponentsColor(ids: string[], color: string): void {
     ids.forEach((id) => this.setComponentColor(id, color))
+  }
+
+  getFloors(): FloorInfo[] {
+    if (!this.currentModel) return []
+    const groups = new Map<string, { ids: string[]; meshes: THREE.Mesh[] }>()
+    this.currentModel.traverse((obj) => {
+      const mesh = obj as THREE.Mesh
+      if (!mesh.isMesh) return
+      const userData = findUserData(mesh)
+      const key = this.getFloorKey(userData)
+      if (!groups.has(key)) groups.set(key, { ids: [], meshes: [] })
+      const g = groups.get(key)!
+      g.ids.push(mesh.uuid)
+      g.meshes.push(mesh)
+    })
+    return Array.from(groups.entries()).map(([key, g]) => {
+      const visible = g.meshes.every((m) => m.visible)
+      const opacity = g.meshes.length > 0 ? this.getMeshOpacity(g.meshes[0]) : 1
+      return { key, name: key, ids: g.ids, visible, opacity }
+    })
+  }
+
+  private getFloorKey(userData: Record<string, unknown>): string {
+    if (userData.floor) return String(userData.floor)
+    if (userData.elevation) return `标高 ${String(userData.elevation)}`
+    if (userData.level) return String(userData.level)
+    return '未指定楼层'
+  }
+
+  setFloorVisibility(key: string, visible: boolean): void {
+    if (!this.currentModel) return
+    const ids = this.getFloorIds(key)
+    this.setComponentsVisibility(ids, visible)
+    this.refreshFloors()
+  }
+
+  setFloorOpacity(key: string, opacity: number): void {
+    if (!this.currentModel) return
+    const ids = this.getFloorIds(key)
+    this.setComponentsOpacity(ids, opacity)
+    this.refreshFloors()
+  }
+
+  setFloorColor(key: string, color: string): void {
+    if (!this.currentModel) return
+    const ids = this.getFloorIds(key)
+    this.setComponentsColor(ids, color)
+    this.refreshFloors()
+  }
+
+  private getFloorIds(key: string): string[] {
+    return this.getFloors().find((f) => f.key === key)?.ids || []
+  }
+
+  private refreshFloors(): void {
+    useViewerStore().setFloors(this.getFloors())
   }
 
   private applyToPickerOriginal(mesh: THREE.Mesh, callback: (mat: THREE.Material) => void): void {

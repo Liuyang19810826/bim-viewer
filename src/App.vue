@@ -6,6 +6,8 @@
     <ComponentTreePanel />
     <PropertyPanel />
     <ClipControlPanel />
+    <FloorBar />
+    <FloorPanel />
     <ViewCube />
     <AxesIcon />
   </main>
@@ -20,6 +22,8 @@ import ComponentTreePanel from '@/components/layout/ComponentTreePanel.vue'
 import PropertyPanel from '@/components/layout/PropertyPanel.vue'
 import StatusBar from '@/components/layout/StatusBar.vue'
 import ClipControlPanel from '@/components/viewer/ClipControlPanel.vue'
+import FloorBar from '@/components/layout/FloorBar.vue'
+import FloorPanel from '@/components/layout/FloorPanel.vue'
 import ViewCube from '@/components/viewer/ViewCube.vue'
 import AxesIcon from '@/components/viewer/AxesIcon.vue'
 </script>

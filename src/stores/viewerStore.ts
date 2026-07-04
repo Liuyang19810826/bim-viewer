@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { ViewerMode, ComponentData, ModelInfo, LoadProgress } from '@/types'
+import type { ViewerMode, ComponentData, ModelInfo, LoadProgress, FloorInfo } from '@/types'
 
 export const useViewerStore = defineStore('viewer', () => {
   const mode = ref<ViewerMode>('view')
@@ -9,6 +9,8 @@ export const useViewerStore = defineStore('viewer', () => {
   const modelLoaded = ref(false)
   const modelInfo = ref<ModelInfo | null>(null)
   const selectedComponent = ref<ComponentData | null>(null)
+  const floors = ref<FloorInfo[]>([])
+  const selectedFloorKey = ref<string | null>(null)
   const statusMessage = ref('就绪')
   const renderQuality = ref('高品质')
 
@@ -40,6 +42,14 @@ export const useViewerStore = defineStore('viewer', () => {
     selectedComponent.value = component
   }
 
+  function setFloors(list: FloorInfo[]) {
+    floors.value = list
+  }
+
+  function selectFloor(key: string | null) {
+    selectedFloorKey.value = key
+  }
+
   function setStatusMessage(msg: string) {
     statusMessage.value = msg
   }
@@ -55,6 +65,8 @@ export const useViewerStore = defineStore('viewer', () => {
     modelLoaded,
     modelInfo,
     selectedComponent,
+    floors,
+    selectedFloorKey,
     statusMessage,
     renderQuality,
     isRoaming,
@@ -66,6 +78,8 @@ export const useViewerStore = defineStore('viewer', () => {
     setModelLoaded,
     setModelInfo,
     selectComponent,
+    setFloors,
+    selectFloor,
     setStatusMessage,
     setRenderQuality,
   }

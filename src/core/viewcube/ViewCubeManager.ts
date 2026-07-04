@@ -50,16 +50,16 @@ export class ViewCubeManager {
   }
 
   private buildCube(): void {
-    const boxSize = 1.8
+    const boxSize = 1.6
     const half = boxSize / 2
 
     const faces = [
-      { normal: new THREE.Vector3(0, 0, 1), color: 0x3b82f6, label: '前' },
-      { normal: new THREE.Vector3(0, 0, -1), color: 0x3b82f6, label: '后' },
-      { normal: new THREE.Vector3(1, 0, 0), color: 0xef4444, label: '右' },
-      { normal: new THREE.Vector3(-1, 0, 0), color: 0xef4444, label: '左' },
-      { normal: new THREE.Vector3(0, 1, 0), color: 0x10b981, label: '上' },
-      { normal: new THREE.Vector3(0, -1, 0), color: 0x10b981, label: '下' },
+      { normal: new THREE.Vector3(0, 0, 1), label: '前' },
+      { normal: new THREE.Vector3(0, 0, -1), label: '后' },
+      { normal: new THREE.Vector3(1, 0, 0), label: '右' },
+      { normal: new THREE.Vector3(-1, 0, 0), label: '左' },
+      { normal: new THREE.Vector3(0, 1, 0), label: '上' },
+      { normal: new THREE.Vector3(0, -1, 0), label: '下' },
     ]
 
     const boxGeo = new THREE.BoxGeometry(boxSize, boxSize, boxSize)
@@ -68,26 +68,25 @@ export class ViewCubeManager {
     for (let i = 0; i < 6; i++) {
       const face = faces[i]
       const canvas = document.createElement('canvas')
-      canvas.width = 128
-      canvas.height = 128
+      canvas.width = 256
+      canvas.height = 256
       const ctx = canvas.getContext('2d')!
-      const hex = '#' + face.color.toString(16).padStart(6, '0')
-      ctx.fillStyle = hex
-      ctx.fillRect(0, 0, 128, 128)
-      ctx.fillStyle = 'rgba(255,255,255,0.12)'
-      ctx.fillRect(0, 0, 128, 128)
-      ctx.strokeStyle = 'rgba(255,255,255,0.4)'
-      ctx.lineWidth = 4
-      ctx.strokeRect(4, 4, 120, 120)
-      ctx.fillStyle = '#ffffff'
-      ctx.font = 'bold 48px sans-serif'
+
+      ctx.fillStyle = '#e2e8f0'
+      ctx.fillRect(0, 0, 256, 256)
+      ctx.strokeStyle = '#94a3b8'
+      ctx.lineWidth = 8
+      ctx.strokeRect(8, 8, 240, 240)
+      ctx.fillStyle = '#1e293b'
+      ctx.font = 'bold 96px sans-serif'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillText(face.label, 64, 64)
+      ctx.fillText(face.label, 128, 128)
 
       const texture = new THREE.CanvasTexture(canvas)
       const mat = new THREE.MeshStandardMaterial({
         map: texture,
+        color: 0xffffff,
         transparent: true,
         opacity: 0.95,
         side: THREE.FrontSide,
@@ -100,66 +99,42 @@ export class ViewCubeManager {
     cube.userData = { isCube: true }
     this.cubeGroup.add(cube)
 
-    // Edge markers
-    const edgePositions = [
-      new THREE.Vector3(half, half, 0),
-      new THREE.Vector3(half, -half, 0),
-      new THREE.Vector3(-half, half, 0),
-      new THREE.Vector3(-half, -half, 0),
-      new THREE.Vector3(half, 0, half),
-      new THREE.Vector3(half, 0, -half),
-      new THREE.Vector3(-half, 0, half),
-      new THREE.Vector3(-half, 0, -half),
-      new THREE.Vector3(0, half, half),
-      new THREE.Vector3(0, half, -half),
-      new THREE.Vector3(0, -half, half),
-      new THREE.Vector3(0, -half, -half),
-    ]
-    const edgeNormals = [
-      new THREE.Vector3(1, 1, 0).normalize(),
-      new THREE.Vector3(1, -1, 0).normalize(),
-      new THREE.Vector3(-1, 1, 0).normalize(),
-      new THREE.Vector3(-1, -1, 0).normalize(),
-      new THREE.Vector3(1, 0, 1).normalize(),
-      new THREE.Vector3(1, 0, -1).normalize(),
-      new THREE.Vector3(-1, 0, 1).normalize(),
-      new THREE.Vector3(-1, 0, -1).normalize(),
-      new THREE.Vector3(0, 1, 1).normalize(),
-      new THREE.Vector3(0, 1, -1).normalize(),
-      new THREE.Vector3(0, -1, 1).normalize(),
-      new THREE.Vector3(0, -1, -1).normalize(),
-    ]
+    // Outer ring
+    const ringGeo = new THREE.TorusGeometry(1.45, 0.015, 16, 100)
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.6 })
+    const ring = new THREE.Mesh(ringGeo, ringMat)
+    ring.rotation.x = Math.PI / 2
+    this.cubeGroup.add(ring)
 
-    const edgeGeo = new THREE.SphereGeometry(0.12, 16, 16)
-    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x00d4ff, emissive: 0x0066ff, emissiveIntensity: 0.5 })
-    edgePositions.forEach((pos, i) => {
-      const mesh = new THREE.Mesh(edgeGeo, edgeMat.clone())
-      mesh.position.copy(pos)
-      mesh.userData = { type: 'edge', normal: edgeNormals[i] }
-      this.cubeGroup.add(mesh)
+    // Direction labels on ring
+    const ringLabels = [
+      { text: '前', pos: new THREE.Vector3(0, 0, 1.6) },
+      { text: '后', pos: new THREE.Vector3(0, 0, -1.6) },
+      { text: '右', pos: new THREE.Vector3(1.6, 0, 0) },
+      { text: '左', pos: new THREE.Vector3(-1.6, 0, 0) },
+    ]
+    ringLabels.forEach((l) => {
+      const sprite = this.createLabel(l.text, '#334155', l.pos)
+      this.cubeGroup.add(sprite)
     })
+  }
 
-    // Vertex markers
-    const vertexPositions = [
-      new THREE.Vector3(half, half, half),
-      new THREE.Vector3(half, half, -half),
-      new THREE.Vector3(half, -half, half),
-      new THREE.Vector3(half, -half, -half),
-      new THREE.Vector3(-half, half, half),
-      new THREE.Vector3(-half, half, -half),
-      new THREE.Vector3(-half, -half, half),
-      new THREE.Vector3(-half, -half, -half),
-    ]
-    const vertexNormals = vertexPositions.map((v) => v.clone().normalize())
-
-    const vertexGeo = new THREE.SphereGeometry(0.16, 16, 16)
-    const vertexMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, emissive: 0xb45309, emissiveIntensity: 0.5 })
-    vertexPositions.forEach((pos, i) => {
-      const mesh = new THREE.Mesh(vertexGeo, vertexMat.clone())
-      mesh.position.copy(pos)
-      mesh.userData = { type: 'vertex', normal: vertexNormals[i] }
-      this.cubeGroup.add(mesh)
-    })
+  private createLabel(text: string, color: string, position: THREE.Vector3): THREE.Sprite {
+    const canvas = document.createElement('canvas')
+    canvas.width = 128
+    canvas.height = 128
+    const ctx = canvas.getContext('2d')!
+    ctx.font = 'bold 64px sans-serif'
+    ctx.fillStyle = color
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, 64, 64)
+    const texture = new THREE.CanvasTexture(canvas)
+    const mat = new THREE.SpriteMaterial({ map: texture, transparent: true })
+    const sprite = new THREE.Sprite(mat)
+    sprite.position.copy(position)
+    sprite.scale.set(0.45, 0.45, 0.45)
+    return sprite
   }
 
   private addLights(): void {
@@ -205,9 +180,11 @@ export class ViewCubeManager {
 
   private onPointerUp = (): void => {
     if (!this.isDragging && this.pendingHit) {
+      const localNormal = this.pendingHit.object.userData.normal as THREE.Vector3
+      const worldNormal = localNormal.clone().applyQuaternion(this.cubeGroup.quaternion)
       this.onInteract?.({
         type: this.pendingHit.object.userData.type,
-        direction: this.pendingHit.object.userData.normal.clone(),
+        direction: worldNormal,
       })
     }
     this.isDragging = false
@@ -225,8 +202,8 @@ export class ViewCubeManager {
   }
 
   syncOrientation(direction: THREE.Vector3): void {
-    const target = direction.clone().multiplyScalar(10)
-    this.cubeGroup.lookAt(target)
+    const normalized = direction.clone().normalize()
+    this.cubeGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normalized)
   }
 
   setCallbacks(

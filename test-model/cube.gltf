@@ -25,7 +25,8 @@
         "elevation": "±0.000",
         "createdAt": "2026-07-02",
         "remark": "测试用构件",
-        "system": "框架柱"
+        "system": "框架柱",
+        "floor": "1F"
       }
     }
   ],

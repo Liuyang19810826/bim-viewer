@@ -41,14 +41,12 @@
         <span>🚶</span> {{ viewerStore.isRoaming ? '退出漫游' : '开启漫游' }}
       </TechButton>
 
-      <div class="preset-dropdown" v-if="viewerStore.modelLoaded">
-        <select v-model="currentPreset" @change="applyQuickPreset">
-          <option value="" disabled>显示预设</option>
-          <option v-for="preset in presets" :key="preset.key" :value="preset.key">
-            {{ preset.name }}
-          </option>
-        </select>
-      </div>
+      <PresetDropdown
+        v-if="viewerStore.modelLoaded"
+        v-model="currentPreset"
+        :options="presets"
+        placeholder="显示预设"
+      />
 
       <TechButton @click="settingsStore.general.logPanelVisible = !settingsStore.general.logPanelVisible">
         <span>📝</span> 日志
@@ -81,6 +79,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { MODE_LABELS } from '@/utils/constants'
 import TechButton from '@/components/common/TechButton.vue'
 import TechDialog from '@/components/common/TechDialog.vue'
+import PresetDropdown from '@/components/common/PresetDropdown.vue'
 import SettingsDrawer from '@/components/settings/SettingsDrawer.vue'
 import { useFileLoader } from '@/composables/useFileLoader'
 import { viewer } from '@/composables/useBIMViewer'
@@ -105,14 +104,12 @@ const presets: { key: RenderPreset; name: string }[] = [
   { key: 'section-cut', name: '剖切着色' },
 ]
 
-const currentPreset = computed(() => settingsStore.render.preset)
-
-function applyQuickPreset() {
-  const preset = currentPreset.value
-  if (preset) {
+const currentPreset = computed({
+  get: () => settingsStore.render.preset,
+  set: (preset) => {
     viewer.value?.setRenderPreset(preset)
-  }
-}
+  },
+})
 
 function onLoadModelClick() {
   showLoadDialog.value = true
@@ -213,20 +210,4 @@ function clearModel() {
   gap: 10px;
 }
 
-.preset-dropdown select {
-  height: 32px;
-  padding: 0 10px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--bg-panel-border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: 12px;
-  cursor: pointer;
-  outline: none;
-}
-
-.preset-dropdown select:hover,
-.preset-dropdown select:focus {
-  border-color: var(--accent-cyan);
-}
 </style>

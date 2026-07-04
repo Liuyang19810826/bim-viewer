@@ -9,7 +9,7 @@
       <template #extra>
         <span class="toggle-btn" @click="collapsed = !collapsed">{{ collapsed ? '展开' : '收起' }}</span>
       </template>
-      <div v-show="!collapsed">
+      <div v-show="!collapsed" class="panel-content">
         <div class="tree-toolbar">
           <TechButton @click="selectAll">全选</TechButton>
           <TechButton @click="clearSelection">清空</TechButton>
@@ -36,16 +36,21 @@
         </div>
 
         <div class="group-list">
-          <div v-for="group in filteredGroups" :key="group.key" class="group-item">
+          <div v-for="group in pageGroups" :key="group.key" class="group-item">
             <div class="group-header">
-              <span class="group-arrow" :class="{ expanded: expandedGroups.has(group.key) }" @click.stop="toggleGroup(group.key)">▶</span>
+              <span
+                class="group-arrow"
+                :class="{ expanded: expandedGroups.has(group.key) }"
+                @click.stop="toggleGroup(group.key)"
+              >▶</span>
               <span class="group-name" @click.stop="toggleGroup(group.key)">{{ group.key }}</span>
               <span class="group-count" @click.stop="toggleGroup(group.key)">({{ group.items.length }})</span>
-              <span class="group-actions" @click.stop>
-                <ColorPicker :model-value="groupColors[group.key]" @update:model-value="setGroupColor(group.key, $event)" />
-              </span>
             </div>
             <div v-show="expandedGroups.has(group.key)" class="group-children">
+              <div class="group-color-row" @click.stop>
+                <span class="color-label">分类颜色</span>
+                <ColorPicker :model-value="groupColors[group.key]" @update:model-value="setGroupColor(group.key, $event)" />
+              </div>
               <div
                 v-for="item in group.items"
                 :key="item.id"
@@ -60,19 +65,22 @@
                   @change="toggleSelect(item.id)"
                 />
                 <div class="tree-item-info">
-                  <div class="tree-item-name">{{ item.name }}</div>
+                  <div class="tree-item-name" :title="item.name">{{ item.name }}</div>
                   <div class="tree-item-meta">
                     <span class="meta-tag discipline">{{ item.discipline }}</span>
                     <span class="meta-tag type">{{ item.type }}</span>
                     <span v-if="!item.visible" class="meta-tag hidden">隐藏</span>
                   </div>
                 </div>
-                <span class="item-color" @click.stop>
-                  <ColorPicker :model-value="itemColors[item.id]" @update:model-value="setItemColor(item.id, $event)" />
-                </span>
               </div>
             </div>
           </div>
+          <div v-if="totalPages > 1" class="pagination">
+            <TechButton :disabled="currentPage === 1" @click="currentPage--">上一页</TechButton>
+            <span class="page-info">{{ currentPage }} / {{ totalPages }}</span>
+            <TechButton :disabled="currentPage === totalPages" @click="currentPage++">下一页</TechButton>
+          </div>
+          <div v-else-if="pageGroups.length === 0" class="empty-tip">无匹配图元</div>
         </div>
       </div>
     </TechPanel>
@@ -91,6 +99,8 @@ import TechSlider from '@/components/common/TechSlider.vue'
 import ColorPicker from '@/components/common/ColorPicker.vue'
 import type { ComponentTreeItem } from '@/types'
 
+const PAGE_SIZE = 20
+
 const viewerStore = useViewerStore()
 const panelRef = ref<HTMLElement | null>(null)
 const { style: dragStyle } = useDraggable(panelRef)
@@ -102,7 +112,7 @@ const batchOpacity = ref(1)
 const items = ref<ComponentTreeItem[]>([])
 const expandedGroups = ref<Set<string>>(new Set())
 const groupColors = ref<Record<string, string>>({})
-const itemColors = ref<Record<string, string>>({})
+const currentPage = ref(1)
 
 function refreshItems() {
   items.value = viewer.value?.getComponentTree() || []
@@ -121,21 +131,34 @@ watch(() => viewerStore.modelLoaded, (loaded) => {
     items.value = []
     selectedIds.value.clear()
     expandedGroups.value.clear()
+    currentPage.value = 1
   }
 })
 
-const filteredGroups = computed(() => {
-  const text = filterText.value.trim().toLowerCase()
-  const filtered = text
-    ? items.value.filter((i) =>
-        i.name.toLowerCase().includes(text) ||
-        i.type.toLowerCase().includes(text) ||
-        i.discipline.toLowerCase().includes(text)
-      )
-    : items.value
+watch(filterText, () => {
+  currentPage.value = 1
+})
 
+const filteredItems = computed(() => {
+  const text = filterText.value.trim().toLowerCase()
+  if (!text) return items.value
+  return items.value.filter((i) =>
+    i.name.toLowerCase().includes(text) ||
+    i.type.toLowerCase().includes(text) ||
+    i.discipline.toLowerCase().includes(text)
+  )
+})
+
+const totalPages = computed(() => Math.ceil(filteredItems.value.length / PAGE_SIZE))
+
+const pagedItems = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE
+  return filteredItems.value.slice(start, start + PAGE_SIZE)
+})
+
+const pageGroups = computed(() => {
   const map = new Map<string, ComponentTreeItem[]>()
-  filtered.forEach((item) => {
+  pagedItems.value.forEach((item) => {
     const key = item.discipline || '其他'
     if (!map.has(key)) map.set(key, [])
     map.get(key)!.push(item)
@@ -164,7 +187,7 @@ function toggleSelect(id: string) {
 }
 
 function selectAll() {
-  selectedIds.value = new Set(filteredGroups.value.flatMap((g) => g.items.map((i) => i.id)))
+  selectedIds.value = new Set(pageGroups.value.flatMap((g) => g.items.map((i) => i.id)))
 }
 
 function clearSelection() {
@@ -210,14 +233,9 @@ function batchHide() {
 
 function setGroupColor(key: string, color: string) {
   groupColors.value[key] = color
-  const ids = filteredGroups.value.find((g) => g.key === key)?.items.map((i) => i.id) || []
+  const ids = pageGroups.value.find((g) => g.key === key)?.items.map((i) => i.id) || []
   viewer.value?.setComponentsColor(ids, color)
   useLogStore().add(`设置分类「${key}」颜色`, 'success', 'user')
-}
-
-function setItemColor(id: string, color: string) {
-  itemColors.value[id] = color
-  viewer.value?.setComponentColor(id, color)
 }
 </script>
 
@@ -229,6 +247,12 @@ function setItemColor(id: string, color: string) {
   width: var(--panel-width);
   max-height: calc(100% - var(--header-height) - var(--status-height) - 252px);
   z-index: 50;
+}
+
+.panel-content {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - var(--header-height) - var(--status-height) - 270px);
 }
 
 .toggle-btn {
@@ -283,11 +307,30 @@ function setItemColor(id: string, color: string) {
 }
 
 .group-list {
-  max-height: calc(100vh - var(--header-height) - var(--status-height) - 360px);
+  flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  padding-right: 4px;
+}
+
+.group-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.group-list::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 3px;
+}
+
+.group-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.group-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .group-item {
@@ -314,6 +357,7 @@ function setItemColor(id: string, color: string) {
   font-size: 10px;
   color: var(--text-muted);
   transition: transform 0.2s;
+  flex-shrink: 0;
 }
 
 .group-arrow.expanded {
@@ -325,16 +369,15 @@ function setItemColor(id: string, color: string) {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .group-count {
   font-size: 11px;
   color: var(--text-muted);
-}
-
-.group-actions {
-  display: flex;
-  align-items: center;
+  flex-shrink: 0;
 }
 
 .group-children {
@@ -342,6 +385,19 @@ function setItemColor(id: string, color: string) {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.group-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.color-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
 .tree-item {
@@ -367,17 +423,21 @@ function setItemColor(id: string, color: string) {
 
 .tree-item input[type='checkbox'] {
   accent-color: var(--accent-cyan);
+  flex-shrink: 0;
 }
 
 .tree-item-info {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
 }
 
 .tree-item-name {
   color: var(--text-primary);
   margin-bottom: 3px;
-  word-break: break-all;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tree-item-meta {
@@ -404,9 +464,30 @@ function setItemColor(id: string, color: string) {
   background: rgba(239, 68, 68, 0.1);
 }
 
-.item-color {
-  flex-shrink: 0;
+.pagination {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 4px;
+  border-top: 1px solid var(--bg-panel-border);
+  margin-top: 4px;
+}
+
+.pagination .tech-button {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.page-info {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.empty-tip {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 16px 0;
 }
 </style>

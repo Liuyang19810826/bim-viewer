@@ -105,6 +105,14 @@ export interface ComponentTreeItem {
   children: ComponentTreeItem[]
 }
 
+export interface FloorInfo {
+  key: string
+  name: string
+  ids: string[]
+  visible: boolean
+  opacity: number
+}
+
 export interface GeneralSettings {
   backgroundColor: string
   highlightColor: string
