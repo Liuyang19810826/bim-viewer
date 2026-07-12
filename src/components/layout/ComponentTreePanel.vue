@@ -3,8 +3,9 @@
     v-if="viewerStore.modelLoaded"
     ref="panelRef"
     class="component-tree-panel"
-    :style="dragStyle"
+    :style="{ ...dragStyle, ...resizeStyle }"
   >
+    <div class="panel-resize-handle" />
     <TechPanel title="图元分类">
       <template #extra>
         <span class="toggle-btn" @click="collapsed = !collapsed">{{ collapsed ? '展开' : '收起' }}</span>
@@ -93,6 +94,7 @@ import { useViewerStore } from '@/stores/viewerStore'
 import { viewer } from '@/composables/useBIMViewer'
 import { useLogStore } from '@/stores/logStore'
 import { useDraggable } from '@/composables/useDraggable'
+import { useResizable } from '@/composables/useResizable'
 import TechPanel from '@/components/common/TechPanel.vue'
 import TechButton from '@/components/common/TechButton.vue'
 import TechSlider from '@/components/common/TechSlider.vue'
@@ -104,6 +106,7 @@ const PAGE_SIZE = 20
 const viewerStore = useViewerStore()
 const panelRef = ref<HTMLElement | null>(null)
 const { style: dragStyle } = useDraggable(panelRef)
+const { style: resizeStyle } = useResizable(panelRef, { minWidth: 260, minHeight: 200 })
 
 const collapsed = ref(false)
 const filterText = ref('')
@@ -243,16 +246,18 @@ function setGroupColor(key: string, color: string) {
 .component-tree-panel {
   position: absolute;
   left: 16px;
-  top: calc(var(--header-height) + 220px);
+  top: calc(var(--header-height) + 260px);
   width: var(--panel-width);
-  max-height: calc(100% - var(--header-height) - var(--status-height) - 252px);
+  max-height: calc(100% - 32px);
+  overflow: hidden;
   z-index: 50;
 }
 
 .panel-content {
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - var(--header-height) - var(--status-height) - 270px);
+  height: calc(100% - 48px);
+  overflow: hidden;
 }
 
 .toggle-btn {
@@ -308,11 +313,31 @@ function setGroupColor(key: string, color: string) {
 
 .group-list {
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding-right: 4px;
+  min-height: 0;
+}
+
+.group-list::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.group-list::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 3px;
+}
+
+.group-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.group-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .group-list::-webkit-scrollbar {
@@ -410,6 +435,7 @@ function setGroupColor(key: string, color: string) {
   cursor: pointer;
   transition: background 0.15s;
   font-size: 12px;
+  min-width: max-content;
 }
 
 .tree-item:hover {

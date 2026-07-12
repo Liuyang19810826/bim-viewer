@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 test-screenshot.png
+*-screenshot.png
+debug-*.png
 
 # Editor directories and files
 .vscode/*

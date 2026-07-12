@@ -76,6 +76,13 @@ async function main() {
     }, { timeout: 30000 })
     console.log('Model loaded successfully')
 
+    // Close load summary dialog if present
+    const summaryDialogClose = await page.$('.dialog-header .close-btn')
+    if (summaryDialogClose) {
+      await summaryDialogClose.click()
+      await new Promise((r) => setTimeout(r, 300))
+    }
+
     // Wait a bit for rendering
     await new Promise((r) => setTimeout(r, 1000))
 
@@ -153,19 +160,6 @@ async function main() {
       await new Promise((r) => setTimeout(r, 500))
       const clipPanel = await page.$('.clip-control-panel')
       console.log('Clip control panel visible:', !!clipPanel)
-
-      // Close clipping
-      if (clipPanel) {
-        const closeButtons = await clipPanel.$$('button')
-        for (const btn of closeButtons) {
-          const text = await page.evaluate((el) => el.textContent, btn)
-          if (text.includes('关闭剖切')) {
-            await btn.click()
-            await new Promise((r) => setTimeout(r, 300))
-            break
-          }
-        }
-      }
     }
 
     // Take screenshot

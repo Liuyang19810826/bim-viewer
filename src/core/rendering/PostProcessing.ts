@@ -66,7 +66,7 @@ export class PostProcessing {
     this.composer.addPass(this.renderPass)
 
     this.ssaoPass = new SSAOPass(scene, camera, width, height)
-    this.ssaoPass.kernelRadius = settings.ssaoRadius
+    this.ssaoPass.kernelRadius = settings.ssaoRadius * settings.ssaoIntensity
     this.ssaoPass.minDistance = 0.005
     this.ssaoPass.maxDistance = 0.1
     this.composer.addPass(this.ssaoPass)
@@ -95,7 +95,7 @@ export class PostProcessing {
   applySettings(settings: RenderSettings): void {
     if (this.ssaoPass) {
       this.ssaoPass.enabled = settings.ssaoEnabled
-      this.ssaoPass.kernelRadius = settings.ssaoRadius
+      this.ssaoPass.kernelRadius = settings.ssaoRadius * settings.ssaoIntensity
     }
     if (this.bloomPass) {
       this.bloomPass.enabled = settings.bloomEnabled

@@ -15,6 +15,7 @@ export function useBIMViewer() {
       const instance = new BIMViewer({ container: containerRef.value })
       instance.applySettings(settingsStore.settings)
       viewer.value = instance
+      ;(window as any).__viewer = instance
       sdkInstance.attach(instance)
       startIframeBridge()
     }

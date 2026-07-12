@@ -3,8 +3,9 @@
     v-if="floor"
     ref="panelRef"
     class="floor-panel"
-    :style="dragStyle"
+    :style="{ ...dragStyle, ...resizeStyle }"
   >
+    <div class="panel-resize-handle" />
     <TechPanel :title="`楼层属性 - ${floor.name}`">
       <template #extra>
         <span class="close-btn" @click="viewerStore.selectFloor(null)">✕</span>
@@ -49,6 +50,7 @@ import { ref, computed, watch } from 'vue'
 import { useViewerStore } from '@/stores/viewerStore'
 import { viewer } from '@/composables/useBIMViewer'
 import { useDraggable } from '@/composables/useDraggable'
+import { useResizable } from '@/composables/useResizable'
 import TechPanel from '@/components/common/TechPanel.vue'
 import TechSlider from '@/components/common/TechSlider.vue'
 import ColorPicker from '@/components/common/ColorPicker.vue'
@@ -56,6 +58,7 @@ import ColorPicker from '@/components/common/ColorPicker.vue'
 const viewerStore = useViewerStore()
 const panelRef = ref<HTMLElement | null>(null)
 const { style: dragStyle } = useDraggable(panelRef)
+const { style: resizeStyle } = useResizable(panelRef, { minWidth: 240, minHeight: 200 })
 
 const floor = computed(() => viewerStore.floors.find((f) => f.key === viewerStore.selectedFloorKey))
 const floorOpacity = ref(1)

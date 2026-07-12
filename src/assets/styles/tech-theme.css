@@ -177,3 +177,22 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 212, 255, 0.5);
 }
+
+/* Panel resize handle */
+.panel-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  z-index: 10;
+  background: linear-gradient(135deg, transparent 50%, rgba(0, 212, 255, 0.5) 50%);
+  border-bottom-right-radius: var(--radius-lg);
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.panel-resize-handle:hover {
+  opacity: 1;
+}

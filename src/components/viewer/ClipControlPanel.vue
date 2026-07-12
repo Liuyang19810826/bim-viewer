@@ -1,5 +1,6 @@
 <template>
-  <div v-if="clip.isClipping" ref="panelRef" class="clip-control-panel" :style="dragStyle">
+  <div v-if="clip.isClipping" ref="panelRef" class="clip-control-panel" :style="{ ...dragStyle, ...resizeStyle }">
+    <div class="panel-resize-handle" />
     <TechPanel title="剖切控制">
       <div class="clip-section">
         <label>剖切方向</label>
@@ -36,6 +37,7 @@ import { ref } from 'vue'
 import { useClipping } from '@/composables/useClipping'
 import { viewer } from '@/composables/useBIMViewer'
 import { useDraggable } from '@/composables/useDraggable'
+import { useResizable } from '@/composables/useResizable'
 import TechPanel from '@/components/common/TechPanel.vue'
 import TechButton from '@/components/common/TechButton.vue'
 import TechSlider from '@/components/common/TechSlider.vue'
@@ -45,6 +47,7 @@ const clip = useClipping()
 const axes: ClipAxis[] = ['x', 'y', 'z']
 const panelRef = ref<HTMLElement | null>(null)
 const { style: dragStyle } = useDraggable(panelRef, '.tech-panel-header')
+const { style: resizeStyle } = useResizable(panelRef, { minWidth: 280, minHeight: 180 })
 
 function closeClipping() {
   viewer.value?.setMode('view')

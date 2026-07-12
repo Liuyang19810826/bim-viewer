@@ -1,15 +1,12 @@
-import { ref, onMounted, type Ref } from 'vue'
+import { ref, watch, onUnmounted, type Ref } from 'vue'
 
 export function useDraggable(elRef: Ref<HTMLElement | null>, handleSelector = '.tech-panel-header') {
   const style = ref<Partial<{ left: string; top: string; position: 'absolute' }>>({})
 
-  onMounted(() => {
-    const el = elRef.value
-    if (!el) return
+  let removeElListener: (() => void) | null = null
+  let removeDocListeners: (() => void) | null = null
 
-    const handle = el.querySelector(handleSelector) as HTMLElement | null
-    if (!handle) return
-
+  const setup = (el: HTMLElement) => {
     let initialized = false
     let isDragging = false
     let startX = 0
@@ -19,40 +16,52 @@ export function useDraggable(elRef: Ref<HTMLElement | null>, handleSelector = '.
 
     const initPosition = () => {
       if (initialized) return
-      const rect = el.getBoundingClientRect()
-      style.value.left = `${rect.left}px`
-      style.value.top = `${rect.top}px`
+      // Use offsetLeft/Top so values are relative to the positioned parent,
+      // avoiding double-counting the header/status bars.
+      style.value.left = `${el.offsetLeft}px`
+      style.value.top = `${el.offsetTop}px`
       style.value.position = 'absolute'
       initialized = true
+    }
+
+    const clampToParent = (left: number, top: number) => {
+      const parent = el.offsetParent as HTMLElement | null
+      if (!parent) return { left, top }
+      const pw = parent.clientWidth
+      const ph = parent.clientHeight
+      const rect = el.getBoundingClientRect()
+      return {
+        left: Math.max(0, Math.min(left, pw - rect.width)),
+        top: Math.max(0, Math.min(top, ph - rect.height)),
+      }
     }
 
     const onMove = (e: MouseEvent) => {
       if (!isDragging) return
       const dx = e.clientX - startX
       const dy = e.clientY - startY
-      let nextLeft = startLeft + dx
-      let nextTop = startTop + dy
-
-      const vw = window.innerWidth
-      const vh = window.innerHeight
-      const rect = el.getBoundingClientRect()
-
-      nextLeft = Math.max(0, Math.min(nextLeft, vw - rect.width))
-      nextTop = Math.max(0, Math.min(nextTop, vh - rect.height))
-
-      style.value.left = `${nextLeft}px`
-      style.value.top = `${nextTop}px`
+      const nextLeft = startLeft + dx
+      const nextTop = startTop + dy
+      const clamped = clampToParent(nextLeft, nextTop)
+      style.value.left = `${clamped.left}px`
+      style.value.top = `${clamped.top}px`
     }
 
     const onUp = () => {
       isDragging = false
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
+      if (removeDocListeners) {
+        removeDocListeners()
+        removeDocListeners = null
+      }
     }
 
     const onDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement
-      if (target.closest('button, .close-btn, .toggle-btn, input, select, .color-picker, .color-swatch')) {
+      // Only start dragging when the user interacts with the header area.
+      const handle = target.closest(handleSelector)
+      if (!handle || !el.contains(handle as Node)) return
+
+      if (target.closest('button, .close-btn, .clear-btn, .toggle-btn, input, select, .color-picker, .color-swatch, .panel-resize-handle')) {
         return
       }
       initPosition()
@@ -61,11 +70,40 @@ export function useDraggable(elRef: Ref<HTMLElement | null>, handleSelector = '.
       startY = e.clientY
       startLeft = parseFloat(style.value.left || '0')
       startTop = parseFloat(style.value.top || '0')
+
       document.addEventListener('mousemove', onMove)
       document.addEventListener('mouseup', onUp)
+      removeDocListeners = () => {
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+      }
     }
 
-    handle.addEventListener('mousedown', onDown)
+    el.addEventListener('mousedown', onDown)
+    removeElListener = () => {
+      el.removeEventListener('mousedown', onDown)
+    }
+  }
+
+  watch(
+    () => elRef.value,
+    (el) => {
+      if (removeElListener) {
+        removeElListener()
+        removeElListener = null
+      }
+      if (removeDocListeners) {
+        removeDocListeners()
+        removeDocListeners = null
+      }
+      if (el) setup(el)
+    },
+    { flush: 'post', immediate: true }
+  )
+
+  onUnmounted(() => {
+    if (removeElListener) removeElListener()
+    if (removeDocListeners) removeDocListeners()
   })
 
   return { style }

@@ -42,6 +42,7 @@
     <div class="toggle-list">
       <TechToggle v-model="settingsStore.general.propertyPanelVisible" label="默认显示属性面板" />
       <TechToggle v-model="settingsStore.general.logPanelVisible" label="默认显示日志面板" />
+      <TechToggle v-model="settingsStore.general.floorPanelVisible" label="默认显示楼层面板" />
       <TechToggle v-model="settingsStore.general.loadingAnimation" label="加载动画" />
       <TechToggle v-model="settingsStore.general.operationHints" label="操作提示" />
     </div>

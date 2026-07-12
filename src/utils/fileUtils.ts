@@ -37,27 +37,26 @@ export async function readFolderFiles(item: FileSystemDirectoryEntry): Promise<F
 
 export function validateGLTFBinFiles(files: File[]): FolderValidationResult {
   const gltfFiles = files.filter((f) => f.name.toLowerCase().endsWith('.gltf'))
+  const glbFiles = files.filter((f) => f.name.toLowerCase().endsWith('.glb'))
   const binFiles = files.filter((f) => f.name.toLowerCase().endsWith('.bin'))
 
-  if (gltfFiles.length === 0) {
-    return { valid: false, binFiles, message: '未找到 .gltf 文件' }
+  if (gltfFiles.length === 0 && glbFiles.length === 0) {
+    return { valid: false, binFiles, message: '未找到 .gltf 或 .glb 文件' }
   }
 
-  if (gltfFiles.length > 1) {
-    return { valid: false, binFiles, message: '当前版本仅支持单个 GLTF 模型加载' }
+  if (gltfFiles.length + glbFiles.length > 1) {
+    return { valid: false, binFiles, message: '当前版本仅支持单个模型文件加载' }
+  }
+
+  // GLB is self-contained, no bin files required.
+  if (glbFiles.length === 1) {
+    return { valid: true, gltfFile: glbFiles[0], binFiles }
   }
 
   const gltfFile = gltfFiles[0]
-  const gltfName = gltfFile.name.replace(/\.gltf$/i, '')
-  const hasMatchingBin = binFiles.some((f) => {
-    const binName = f.name.replace(/\.bin$/i, '')
-    return binName === gltfName || binName.startsWith(gltfName)
-  })
 
-  if (!hasMatchingBin) {
-    return { valid: false, binFiles, message: '模型文件不完整，请检查 gltf/bin 配套文件' }
-  }
-
+  // GLTF may use embedded buffers (no external .bin) or external .bin files.
+  // Allow any accompanying .bin files; the loader will report missing references if any.
   return { valid: true, gltfFile, binFiles }
 }
 

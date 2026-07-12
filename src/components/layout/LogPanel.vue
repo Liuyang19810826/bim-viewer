@@ -1,5 +1,6 @@
 <template>
-  <aside v-if="settingsStore.general.logPanelVisible" ref="panelRef" class="log-panel" :style="dragStyle">
+  <aside v-if="settingsStore.general.logPanelVisible" ref="panelRef" class="log-panel" :style="{ ...dragStyle, ...resizeStyle }">
+    <div class="panel-resize-handle" />
     <TechPanel title="操作日志">
       <template #extra>
         <span class="clear-btn" @click="logStore.clear">清空</span>
@@ -29,12 +30,14 @@ import { ref } from 'vue'
 import { useLogStore } from '@/stores/logStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useDraggable } from '@/composables/useDraggable'
+import { useResizable } from '@/composables/useResizable'
 import TechPanel from '@/components/common/TechPanel.vue'
 
 const logStore = useLogStore()
 const settingsStore = useSettingsStore()
 const panelRef = ref<HTMLElement | null>(null)
 const { style: dragStyle } = useDraggable(panelRef)
+const { style: resizeStyle } = useResizable(panelRef, { minWidth: 220, minHeight: 160 })
 </script>
 
 <style scoped>

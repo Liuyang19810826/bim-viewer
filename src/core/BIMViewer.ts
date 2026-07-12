@@ -12,7 +12,9 @@ import { MaterialReplacer } from './rendering/MaterialReplacer'
 import { EnvironmentBuilder } from './rendering/EnvironmentBuilder'
 import { PostProcessing } from './rendering/PostProcessing'
 import { PresetApplier } from './rendering/PresetApplier'
-import type { AppSettings, ComponentData, ModelInfo, ViewerMode, RoamingSpeed, ClipAxis, APIResponse, ComponentTreeItem, RenderPreset, FloorInfo } from '@/types'
+import { PerformanceMonitor } from './PerformanceMonitor'
+import { RegionZoomManager } from './region/RegionZoomManager'
+import type { AppSettings, ComponentData, ModelInfo, ViewerMode, RoamingSpeed, ClipAxis, APIResponse, ComponentTreeItem, RenderPreset, FloorInfo, SceneTreeNode, ModelStats, NodeProperties, MaterialInfo, RenderSettings, PerformanceStats, MeasurementType, MeasurementPoint } from '@/types'
 
 export interface BIMViewerOptions {
   container: HTMLElement
@@ -33,8 +35,19 @@ export class BIMViewer {
   loader = new FolderGLTFLoader()
   postProcessing?: PostProcessing
   presetApplier = new PresetApplier()
+  performanceMonitor: PerformanceMonitor
 
   private currentModel: THREE.Group | null = null
+  private gridHelper: THREE.GridHelper | null = null
+  private zeroGridHelper: THREE.GridHelper | null = null
+  private selectedNode: THREE.Object3D | null = null
+  private selectedNodeOriginalEmissive = new Map<string, { color: THREE.Color; intensity: number }>()
+  private ambientLight: THREE.AmbientLight | null = null
+  private directionalLight: THREE.DirectionalLight | null = null
+  private materialOriginalValues = new Map<string, Partial<Record<keyof import('@/types').MaterialInfo, unknown>>>()
+  private measurementGroup = new THREE.Group()
+  private measurementRaycaster = new THREE.Raycaster()
+  private regionZoomManager: RegionZoomManager | null = null
   private defaultCameraPosition = new THREE.Vector3(30, 30, 30)
   private defaultTarget = new THREE.Vector3(0, 0, 0)
   private animationId = 0
@@ -69,6 +82,9 @@ export class BIMViewer {
 
     this.roaming = new RoamingControl(this.camera, this.renderer.domElement)
     this.clipManager = new ClipManager(this.scene, this.renderer)
+    this.performanceMonitor = new PerformanceMonitor(this.renderer)
+    this.measurementGroup.name = 'MeasurementGroup'
+    this.scene.add(this.measurementGroup)
 
     const settings = useSettingsStore()
     this.picker = new ComponentPicker(this.camera, this.scene, settings.general.highlightColor)
@@ -81,20 +97,32 @@ export class BIMViewer {
   }
 
   private setupLights(): void {
-    const ambient = new THREE.AmbientLight(0xffffff, 0.3)
-    this.scene.add(ambient)
+    const settings = useSettingsStore().render
 
-    const directional = new THREE.DirectionalLight(0xffffff, 0.8)
-    directional.position.set(50, 80, 50)
-    directional.castShadow = true
-    directional.shadow.mapSize.set(2048, 2048)
-    directional.shadow.camera.near = 0.5
-    directional.shadow.camera.far = 200
-    directional.shadow.camera.left = -50
-    directional.shadow.camera.right = 50
-    directional.shadow.camera.top = 50
-    directional.shadow.camera.bottom = -50
-    this.scene.add(directional)
+    this.ambientLight = new THREE.AmbientLight(settings.ambientColor, settings.ambientIntensity)
+    this.scene.add(this.ambientLight)
+
+    this.directionalLight = new THREE.DirectionalLight(settings.directionalColor, settings.directionalIntensity)
+    this.directionalLight.position.set(
+      settings.directionalPosition.x,
+      settings.directionalPosition.y,
+      settings.directionalPosition.z
+    )
+    this.directionalLight.target.position.set(
+      settings.directionalTarget.x,
+      settings.directionalTarget.y,
+      settings.directionalTarget.z
+    )
+    this.directionalLight.castShadow = true
+    this.directionalLight.shadow.mapSize.set(settings.shadowResolution, settings.shadowResolution)
+    this.directionalLight.shadow.camera.near = 0.5
+    this.directionalLight.shadow.camera.far = 200
+    this.directionalLight.shadow.camera.left = -settings.shadowRange
+    this.directionalLight.shadow.camera.right = settings.shadowRange
+    this.directionalLight.shadow.camera.top = settings.shadowRange
+    this.directionalLight.shadow.camera.bottom = -settings.shadowRange
+    this.scene.add(this.directionalLight)
+    this.scene.add(this.directionalLight.target)
   }
 
   private startRenderLoop(): void {
@@ -106,11 +134,13 @@ export class BIMViewer {
       this.roaming.update(delta)
       this.orbit.update()
 
+      this.performanceMonitor.beginFrame()
       if (this.usePostProcessing && this.postProcessing) {
         this.postProcessing.render()
       } else {
         this.renderer.render(this.scene, this.camera)
       }
+      this.performanceMonitor.endFrame()
     }
     animate()
   }
@@ -151,6 +181,7 @@ export class BIMViewer {
       MaterialReplacer.replaceWithStandardMaterial(result.scene, useSettingsStore().render)
       this.applyCurrentPreset()
       this.fitCameraToModel()
+      this.updateGrid()
 
       const envTexture = EnvironmentBuilder.buildDefaultEnvironment(this.renderer)
       this.scene.environment = envTexture
@@ -158,8 +189,17 @@ export class BIMViewer {
       this.initPostProcessing()
 
       viewer.setModelInfo(result.info)
+      viewer.setModelStats(this.getModelStats())
+      viewer.setGltfValidation(result.validation || null)
       viewer.setModelLoaded(true)
       viewer.setFloors(this.getFloors())
+      viewer.setLoadSummary({
+        name: result.info.name,
+        componentCount: result.info.componentCount,
+        vertexCount: result.info.vertexCount,
+        triangleCount: result.info.triangleCount,
+        floors: this.getFloors(),
+      })
       viewer.setStatusMessage(`模型加载成功：${result.info.name}`)
       logs.add('模型加载', 'success', 'user', result.info.name)
 
@@ -189,6 +229,39 @@ export class BIMViewer {
     this.camera.lookAt(center)
     this.orbit.controls.target.copy(center)
     this.orbit.saveState()
+  }
+
+  private disposeGridHelper(grid: THREE.GridHelper | null): void {
+    if (!grid) return
+    this.scene.remove(grid)
+    ;(grid.geometry as THREE.BufferGeometry).dispose()
+    const mats = Array.isArray(grid.material) ? grid.material : [grid.material]
+    mats.forEach((m) => (m as THREE.Material).dispose())
+  }
+
+  private updateGrid(): void {
+    if (!this.currentModel) return
+    this.disposeGridHelper(this.gridHelper)
+    this.disposeGridHelper(this.zeroGridHelper)
+    this.gridHelper = null
+    this.zeroGridHelper = null
+
+    const box = new THREE.Box3().setFromObject(this.currentModel)
+    const size = box.getSize(new THREE.Vector3())
+    const center = box.getCenter(new THREE.Vector3())
+    const maxDim = Math.max(size.x, size.y, size.z)
+    const gridSize = Math.max(maxDim * 2, 10)
+    const divisions = Math.max(Math.round(gridSize / Math.max(maxDim / 10, 1)), 10)
+
+    // Bottom grid aligned with the model bounding box minimum.
+    this.gridHelper = new THREE.GridHelper(gridSize, divisions, 0x475569, 0x1e293b)
+    this.gridHelper.position.set(center.x, box.min.y, center.z)
+    this.scene.add(this.gridHelper)
+
+    // Zero-elevation reference grid to visually separate above/below ground.
+    this.zeroGridHelper = new THREE.GridHelper(gridSize, divisions, 0x888888, 0x444444)
+    this.zeroGridHelper.position.set(center.x, 0, center.z)
+    this.scene.add(this.zeroGridHelper)
   }
 
   private initPostProcessing(): void {
@@ -314,7 +387,39 @@ export class BIMViewer {
     return this.viewLocked
   }
 
+  getCurrentModel(): THREE.Group | null {
+    return this.currentModel
+  }
+
+  focusOnBox(box: THREE.Box3): void {
+    const center = box.getCenter(new THREE.Vector3())
+    const size = box.getSize(new THREE.Vector3())
+    const maxDim = Math.max(size.x, size.y, size.z, 0.01)
+    const fov = (this.camera as THREE.PerspectiveCamera).fov ?? 60
+    const distance = Math.max(
+      maxDim / (2 * Math.tan((fov * Math.PI) / 360)) * 1.5,
+      maxDim * 0.8
+    )
+    const offset = this.getCameraDirection().normalize().multiplyScalar(distance)
+    this.camera.position.copy(center).add(offset)
+    this.camera.lookAt(center)
+    this.orbit.controls.target.copy(center)
+    this.orbit.controls.update()
+    useLogStore().add('区域放大', 'success', 'user')
+  }
+
+  startRegionZoom(): void {
+    this.stopRegionZoom()
+    this.regionZoomManager = new RegionZoomManager(this)
+  }
+
+  stopRegionZoom(): void {
+    this.regionZoomManager?.dispose()
+    this.regionZoomManager = null
+  }
+
   clearModel(logAction = true): void {
+    this.stopRegionZoom()
     if (this.currentModel) {
       this.currentModel.traverse((obj) => {
         const mesh = obj as THREE.Mesh
@@ -327,13 +432,22 @@ export class BIMViewer {
       this.scene.remove(this.currentModel)
       this.currentModel = null
     }
+    this.disposeGridHelper(this.gridHelper)
+    this.disposeGridHelper(this.zeroGridHelper)
+    this.gridHelper = null
+    this.zeroGridHelper = null
 
     this.picker.clearHighlight()
+    this.deselectNode()
     useViewerStore().selectComponent(null)
+    useViewerStore().selectNode(null)
     useViewerStore().setModelLoaded(false)
     useViewerStore().setModelInfo(null)
+    useViewerStore().setModelStats(null)
+    useViewerStore().setGltfValidation(null)
     useViewerStore().setFloors([])
     useViewerStore().selectFloor(null)
+    useViewerStore().setLoadSummary(null)
     if (logAction) {
       useLogStore().add('模型清空', 'success', 'user')
       useViewerStore().setStatusMessage('模型已清空')
@@ -469,6 +583,9 @@ export class BIMViewer {
     this.renderer.toneMappingExposure = settings.render.acesIntensity
     this.renderer.outputColorSpace = settings.render.srgbOutput ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace
     this.renderer.shadowMap.enabled = settings.render.shadowEnabled
+    this.renderer.shadowMap.type = settings.render.shadowSoft ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap
+
+    this.applyLightSettings(settings.render)
 
     if (this.currentModel) {
       MaterialReplacer.updateMaterials(this.currentModel, settings.render)
@@ -488,6 +605,263 @@ export class BIMViewer {
     useSettingsStore().updateRender({ preset })
     this.applyCurrentPreset()
     useLogStore().add(`切换渲染预设：${this.getPresetLabel(preset)}`, 'success', 'user')
+  }
+
+  private applyLightSettings(render: RenderSettings): void {
+    if (this.ambientLight) {
+      this.ambientLight.color.set(render.ambientColor)
+      this.ambientLight.intensity = render.ambientIntensity
+    }
+    if (this.directionalLight) {
+      this.directionalLight.color.set(render.directionalColor)
+      this.directionalLight.intensity = render.directionalIntensity
+      this.directionalLight.position.set(
+        render.directionalPosition.x,
+        render.directionalPosition.y,
+        render.directionalPosition.z
+      )
+      this.directionalLight.target.position.set(
+        render.directionalTarget.x,
+        render.directionalTarget.y,
+        render.directionalTarget.z
+      )
+      this.directionalLight.target.updateMatrixWorld()
+      this.directionalLight.shadow.mapSize.set(render.shadowResolution, render.shadowResolution)
+      this.directionalLight.shadow.camera.left = -render.shadowRange
+      this.directionalLight.shadow.camera.right = render.shadowRange
+      this.directionalLight.shadow.camera.top = render.shadowRange
+      this.directionalLight.shadow.camera.bottom = -render.shadowRange
+    }
+  }
+
+  getLightSettings() {
+    const pointLights: { uuid: string; name: string; intensity: number; color: string }[] = []
+    this.scene.traverse((obj) => {
+      const light = obj as THREE.PointLight
+      if (light.isPointLight) {
+        pointLights.push({
+          uuid: light.uuid,
+          name: light.name || '点光源',
+          intensity: light.intensity,
+          color: '#' + light.color.getHexString(),
+        })
+      }
+    })
+    const render = useSettingsStore().render
+    return {
+      ambient: {
+        intensity: render.ambientIntensity,
+        color: render.ambientColor,
+      },
+      directional: {
+        intensity: render.directionalIntensity,
+        color: render.directionalColor,
+        position: render.directionalPosition,
+        target: render.directionalTarget,
+      },
+      shadow: {
+        enabled: render.shadowEnabled,
+        resolution: render.shadowResolution,
+        soft: render.shadowSoft,
+      },
+      pointLights,
+    }
+  }
+
+  setAmbientLight(intensity: number, color: string): void {
+    useSettingsStore().updateRender({ ambientIntensity: intensity, ambientColor: color })
+    this.applyLightSettings(useSettingsStore().render)
+    useLogStore().add('调整环境光', 'success', 'user')
+  }
+
+  setDirectionalLight(
+    intensity: number,
+    color: string,
+    position: { x: number; y: number; z: number },
+    target: { x: number; y: number; z: number }
+  ): void {
+    useSettingsStore().updateRender({
+      directionalIntensity: intensity,
+      directionalColor: color,
+      directionalPosition: position,
+      directionalTarget: target,
+    })
+    this.applyLightSettings(useSettingsStore().render)
+    useLogStore().add('调整平行光', 'success', 'user')
+  }
+
+  setShadowEnabled(enabled: boolean): void {
+    useSettingsStore().updateRender({ shadowEnabled: enabled })
+    this.renderer.shadowMap.enabled = enabled
+    this.renderer.shadowMap.needsUpdate = true
+    this.scene.traverse((obj) => {
+      const mesh = obj as THREE.Mesh
+      if (mesh.isMesh && mesh.material) {
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+        mats.forEach((mat) => {
+          mat.needsUpdate = true
+        })
+      }
+    })
+    useLogStore().add(enabled ? '开启阴影' : '关闭阴影', 'success', 'user')
+  }
+
+  setShadowResolution(resolution: number): void {
+    useSettingsStore().updateRender({ shadowResolution: resolution })
+    this.applyLightSettings(useSettingsStore().render)
+    useLogStore().add(`阴影分辨率调整为 ${resolution}`, 'success', 'user')
+  }
+
+  setShadowSoft(soft: boolean): void {
+    useSettingsStore().updateRender({ shadowSoft: soft })
+    this.renderer.shadowMap.type = soft ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap
+    useLogStore().add(soft ? '切换为软阴影' : '切换为硬阴影', 'success', 'user')
+  }
+
+  setPointLightIntensity(uuid: string, intensity: number): void {
+    let found: THREE.PointLight | null = null
+    this.scene.traverse((obj) => {
+      const light = obj as THREE.PointLight
+      if (light.isPointLight && light.uuid === uuid) {
+        found = light
+      }
+    })
+    if (found) {
+      ;(found as THREE.PointLight).intensity = intensity
+      useLogStore().add('调整点光源强度', 'success', 'user')
+    }
+  }
+
+  getMaterials(): MaterialInfo[] {
+    if (!this.currentModel) return []
+    const map = new Map<string, THREE.Material>()
+    this.currentModel.traverse((obj) => {
+      const mesh = obj as THREE.Mesh
+      if (!mesh.isMesh) return
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      mats.forEach((mat) => {
+        if (!map.has(mat.uuid)) map.set(mat.uuid, mat)
+      })
+    })
+    return Array.from(map.values()).map((mat) => this.buildMaterialInfo(mat))
+  }
+
+  private buildMaterialInfo(mat: THREE.Material): MaterialInfo {
+    if (mat instanceof THREE.MeshStandardMaterial) {
+      return {
+        uuid: mat.uuid,
+        name: mat.name || mat.type || '未命名材质',
+        type: 'MeshStandardMaterial',
+        color: '#' + mat.color.getHexString(),
+        metalness: mat.metalness,
+        roughness: mat.roughness,
+        normalScale: mat.normalScale?.x ?? 1,
+        emissiveIntensity: mat.emissiveIntensity,
+        opacity: mat.opacity,
+        transparent: mat.transparent,
+      }
+    }
+    return {
+      uuid: mat.uuid,
+      name: mat.name || mat.type || '未命名材质',
+      type: mat.type,
+      color: '#ffffff',
+      metalness: 0,
+      roughness: 1,
+      normalScale: 1,
+      emissiveIntensity: 0,
+      opacity: mat.opacity ?? 1,
+      transparent: mat.transparent ?? false,
+    }
+  }
+
+  getMaterialInfo(uuid: string): MaterialInfo | null {
+    const mat = this.findMaterial(uuid)
+    if (!mat) return null
+    return this.buildMaterialInfo(mat)
+  }
+
+  private findMaterial(uuid: string): THREE.Material | null {
+    if (!this.currentModel) return null
+    let found: THREE.Material | null = null
+    this.currentModel.traverse((obj) => {
+      const mesh = obj as THREE.Mesh
+      if (!mesh.isMesh) return
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      mats.forEach((mat) => {
+        if (mat.uuid === uuid) found = mat
+      })
+    })
+    return found
+  }
+
+  setMaterialValue(uuid: string, key: keyof MaterialInfo, value: unknown): void {
+    const mat = this.findMaterial(uuid)
+    if (!mat || !(mat instanceof THREE.MeshStandardMaterial)) return
+    this.ensureMaterialOriginal(mat)
+    switch (key) {
+      case 'color':
+        mat.color.set(value as string)
+        break
+      case 'metalness':
+        mat.metalness = value as number
+        break
+      case 'roughness':
+        mat.roughness = value as number
+        break
+      case 'normalScale': {
+        const scale = value as number
+        mat.normalScale.set(scale, scale)
+        break
+      }
+      case 'emissiveIntensity':
+        mat.emissiveIntensity = value as number
+        break
+      case 'opacity':
+        mat.opacity = value as number
+        break
+      case 'transparent':
+        mat.transparent = value as boolean
+        break
+    }
+    mat.needsUpdate = true
+  }
+
+  private ensureMaterialOriginal(mat: THREE.MeshStandardMaterial): void {
+    if (this.materialOriginalValues.has(mat.uuid)) return
+    this.materialOriginalValues.set(mat.uuid, {
+      color: '#' + mat.color.getHexString(),
+      metalness: mat.metalness,
+      roughness: mat.roughness,
+      normalScale: mat.normalScale?.x ?? 1,
+      emissiveIntensity: mat.emissiveIntensity,
+      opacity: mat.opacity,
+      transparent: mat.transparent,
+    })
+  }
+
+  resetMaterial(uuid: string): void {
+    const mat = this.findMaterial(uuid)
+    if (!mat || !(mat instanceof THREE.MeshStandardMaterial)) return
+    const original = this.materialOriginalValues.get(uuid)
+    if (!original) return
+    if (original.color !== undefined) mat.color.set(original.color as string)
+    if (original.metalness !== undefined) mat.metalness = original.metalness as number
+    if (original.roughness !== undefined) mat.roughness = original.roughness as number
+    if (original.normalScale !== undefined) {
+      const scale = original.normalScale as number
+      mat.normalScale.set(scale, scale)
+    }
+    if (original.emissiveIntensity !== undefined) mat.emissiveIntensity = original.emissiveIntensity as number
+    if (original.opacity !== undefined) mat.opacity = original.opacity as number
+    if (original.transparent !== undefined) mat.transparent = original.transparent as boolean
+    mat.needsUpdate = true
+    this.materialOriginalValues.delete(uuid)
+  }
+
+  resetAllMaterials(): void {
+    const uuids = Array.from(this.materialOriginalValues.keys())
+    uuids.forEach((uuid) => this.resetMaterial(uuid))
   }
 
   private getPresetLabel(preset: RenderPreset): string {
@@ -634,17 +1008,42 @@ export class BIMViewer {
 
   getFloors(): FloorInfo[] {
     if (!this.currentModel) return []
-    const groups = new Map<string, { ids: string[]; meshes: THREE.Mesh[] }>()
+    const meshes: THREE.Mesh[] = []
     this.currentModel.traverse((obj) => {
       const mesh = obj as THREE.Mesh
-      if (!mesh.isMesh) return
-      const userData = findUserData(mesh)
-      const key = this.getFloorKey(userData)
-      if (!groups.has(key)) groups.set(key, { ids: [], meshes: [] })
-      const g = groups.get(key)!
-      g.ids.push(mesh.uuid)
-      g.meshes.push(mesh)
+      if (mesh.isMesh) meshes.push(mesh)
     })
+    if (meshes.length === 0) return []
+
+    const hasExplicit = meshes.some((m) => {
+      const ud = findUserData(m)
+      return ud.floor || ud.elevation || ud.level
+    })
+
+    if (hasExplicit) {
+      const groups = new Map<string, { ids: string[]; meshes: THREE.Mesh[] }>()
+      meshes.forEach((mesh) => {
+        const ud = findUserData(mesh)
+        const key = this.getExplicitFloorKey(ud)
+        if (!groups.has(key)) groups.set(key, { ids: [], meshes: [] })
+        const g = groups.get(key)!
+        g.ids.push(mesh.uuid)
+        g.meshes.push(mesh)
+      })
+      return this.buildFloorInfos(groups)
+    }
+
+    return this.buildFloorInfosFromHeightClusters(meshes)
+  }
+
+  private getExplicitFloorKey(userData: Record<string, unknown>): string {
+    if (userData.floor) return String(userData.floor)
+    if (userData.elevation) return `标高 ${String(userData.elevation)}`
+    if (userData.level) return String(userData.level)
+    return '未指定楼层'
+  }
+
+  private buildFloorInfos(groups: Map<string, { ids: string[]; meshes: THREE.Mesh[] }>): FloorInfo[] {
     return Array.from(groups.entries()).map(([key, g]) => {
       const visible = g.meshes.every((m) => m.visible)
       const opacity = g.meshes.length > 0 ? this.getMeshOpacity(g.meshes[0]) : 1
@@ -652,11 +1051,43 @@ export class BIMViewer {
     })
   }
 
-  private getFloorKey(userData: Record<string, unknown>): string {
-    if (userData.floor) return String(userData.floor)
-    if (userData.elevation) return `标高 ${String(userData.elevation)}`
-    if (userData.level) return String(userData.level)
-    return '未指定楼层'
+  private buildFloorInfosFromHeightClusters(meshes: THREE.Mesh[]): FloorInfo[] {
+    const positions = meshes.map((mesh) => {
+      const box = new THREE.Box3().setFromObject(mesh)
+      const center = box.getCenter(new THREE.Vector3())
+      return { mesh, y: center.y }
+    })
+    const sorted = [...positions].sort((a, b) => a.y - b.y)
+    const ys = sorted.map((p) => p.y)
+    const gaps: number[] = []
+    for (let i = 1; i < ys.length; i++) {
+      gaps.push(ys[i] - ys[i - 1])
+    }
+    const sortedGaps = [...gaps].sort((a, b) => a - b)
+    const medianGap = sortedGaps.length > 0 ? sortedGaps[Math.floor(sortedGaps.length / 2)] : 0
+    const threshold = medianGap > 0 ? medianGap * 2 : 1
+
+    const clusters: { y: number; items: typeof positions }[] = []
+    sorted.forEach((p) => {
+      const last = clusters[clusters.length - 1]
+      if (!last || p.y - last.y > threshold) {
+        clusters.push({ y: p.y, items: [p] })
+      } else {
+        last.items.push(p)
+        last.y = last.items.reduce((sum, i) => sum + i.y, 0) / last.items.length
+      }
+    })
+
+    const groups = new Map<string, { ids: string[]; meshes: THREE.Mesh[] }>()
+    clusters.forEach((c, index) => {
+      const key = `F${index + 1}`
+      groups.set(key, { ids: [], meshes: [] })
+      c.items.forEach((p) => {
+        groups.get(key)!.ids.push(p.mesh.uuid)
+        groups.get(key)!.meshes.push(p.mesh)
+      })
+    })
+    return this.buildFloorInfos(groups)
   }
 
   setFloorVisibility(key: string, visible: boolean): void {
@@ -701,14 +1132,362 @@ export class BIMViewer {
     this.usePostProcessing = enabled
   }
 
+  applyPostProcessingSettings(partial: Partial<RenderSettings>): void {
+    useSettingsStore().updateRender(partial)
+    const render = useSettingsStore().render
+    this.renderer.toneMapping = render.acesToneMapping ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping
+    this.renderer.toneMappingExposure = render.acesIntensity
+    this.postProcessing?.applySettings(render)
+  }
+
+  getPerformanceStats(): PerformanceStats {
+    return this.performanceMonitor.getStats()
+  }
+
+  getFpsHistory(): number[] {
+    return this.performanceMonitor.getFpsHistory()
+  }
+
+  startMeasurement(type: MeasurementType): void {
+    useViewerStore().startMeasurement(type)
+    this.clearMeasurementVisuals()
+    useLogStore().add(`开始${this.getMeasurementLabel(type)}测量`, 'success', 'user')
+  }
+
+  stopMeasurement(): void {
+    useViewerStore().stopMeasurement()
+    this.clearMeasurementVisuals()
+  }
+
+  private clearMeasurementVisuals(): void {
+    this.measurementGroup.clear()
+  }
+
+  pickMeasurementPoint(clientX: number, clientY: number): MeasurementPoint | null {
+    if (!this.currentModel) return null
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const mouse = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1
+    )
+    this.measurementRaycaster.setFromCamera(mouse, this.camera)
+    const intersects = this.measurementRaycaster.intersectObject(this.currentModel, true)
+    if (intersects.length === 0) return null
+    const point = intersects[0].point
+    this.addMeasurementMarker(point)
+    return { x: point.x, y: point.y, z: point.z }
+  }
+
+  private addMeasurementMarker(point: THREE.Vector3): void {
+    const geometry = new THREE.SphereGeometry(0.15, 16, 16)
+    const material = new THREE.MeshBasicMaterial({ color: 0x00d4ff, depthTest: false })
+    const marker = new THREE.Mesh(geometry, material)
+    marker.position.copy(point)
+    marker.renderOrder = 999
+    this.measurementGroup.add(marker)
+  }
+
+  addMeasurementLine(a: THREE.Vector3, b: THREE.Vector3): void {
+    const geometry = new THREE.BufferGeometry().setFromPoints([a, b])
+    const material = new THREE.LineBasicMaterial({ color: 0x00d4ff, depthTest: false })
+    const line = new THREE.Line(geometry, material)
+    line.renderOrder = 999
+    this.measurementGroup.add(line)
+  }
+
+  updateMeasurementResult(): void {
+    const store = useViewerStore()
+    const points = store.measurementPoints
+    const type = store.measurementType
+    if (!type || points.length === 0) {
+      store.setMeasurementResult(null)
+      return
+    }
+
+    this.clearMeasurementVisuals()
+    points.forEach((p) => this.addMeasurementMarker(new THREE.Vector3(p.x, p.y, p.z)))
+
+    const vecs = points.map((p) => new THREE.Vector3(p.x, p.y, p.z))
+    if (type === 'distance' && vecs.length >= 2) {
+      const last = vecs[vecs.length - 1]
+      const prev = vecs[vecs.length - 2]
+      this.addMeasurementLine(prev, last)
+      const total = this.computePolylineLength(vecs)
+      store.setMeasurementResult(`总距离：${total.toFixed(3)} m`)
+    } else if (type === 'angle' && vecs.length >= 3) {
+      const v0 = vecs[vecs.length - 3]
+      const v1 = vecs[vecs.length - 2]
+      const v2 = vecs[vecs.length - 1]
+      this.addMeasurementLine(v0, v1)
+      this.addMeasurementLine(v1, v2)
+      const angle = this.computeAngle(v0, v1, v2)
+      store.setMeasurementResult(`夹角：${angle.toFixed(2)}°`)
+    } else if (type === 'area' && vecs.length >= 3) {
+      for (let i = 0; i < vecs.length; i++) {
+        this.addMeasurementLine(vecs[i], vecs[(i + 1) % vecs.length])
+      }
+      const area = this.computePolygonArea(vecs)
+      store.setMeasurementResult(`面积：${area.toFixed(3)} m²`)
+    }
+  }
+
+  private computePolylineLength(points: THREE.Vector3[]): number {
+    let length = 0
+    for (let i = 1; i < points.length; i++) {
+      length += points[i].distanceTo(points[i - 1])
+    }
+    return length
+  }
+
+  private computeAngle(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3): number {
+    const v1 = new THREE.Vector3().subVectors(a, b)
+    const v2 = new THREE.Vector3().subVectors(c, b)
+    const denom = v1.length() * v2.length()
+    if (denom === 0) return 0
+    let cos = v1.dot(v2) / denom
+    cos = Math.max(-1, Math.min(1, cos))
+    return (Math.acos(cos) * 180) / Math.PI
+  }
+
+  private computePolygonArea(points: THREE.Vector3[]): number {
+    let area = 0
+    for (let i = 1; i < points.length - 1; i++) {
+      const v0 = points[0]
+      const v1 = points[i]
+      const v2 = points[i + 1]
+      const e1 = new THREE.Vector3().subVectors(v1, v0)
+      const e2 = new THREE.Vector3().subVectors(v2, v0)
+      area += new THREE.Vector3().crossVectors(e1, e2).length() / 2
+    }
+    return area
+  }
+
+  private getMeasurementLabel(type: MeasurementType): string {
+    return { distance: '距离', angle: '角度', area: '面积' }[type]
+  }
+
   getSceneStatus() {
     const viewer = useViewerStore()
     return {
       mode: viewer.mode,
       modelLoaded: viewer.modelLoaded,
       selectedComponentId: viewer.selectedComponent?.id || null,
+      selectedNodeUuid: viewer.selectedNodeUuid,
       renderQuality: viewer.renderQuality,
     }
+  }
+
+  getSceneTree(): SceneTreeNode[] {
+    if (!this.currentModel) return []
+    return [this.buildSceneTreeNode(this.currentModel)]
+  }
+
+  private buildSceneTreeNode(obj: THREE.Object3D): SceneTreeNode {
+    const type = this.getSceneTreeNodeType(obj)
+    const children: SceneTreeNode[] = []
+    obj.children.forEach((child) => {
+      if (child === this.gridHelper || child === this.zeroGridHelper) return
+      children.push(this.buildSceneTreeNode(child))
+    })
+    return {
+      id: obj.uuid,
+      uuid: obj.uuid,
+      name: obj.name || `${type}_${obj.uuid.slice(0, 6)}`,
+      type,
+      visible: obj.visible,
+      children,
+    }
+  }
+
+  private getSceneTreeNodeType(obj: THREE.Object3D): SceneTreeNode['type'] {
+    if (obj.type === 'Scene') return 'Scene'
+    if ((obj as THREE.Mesh).isMesh) return 'Mesh'
+    if ((obj as THREE.Light).isLight) return 'Light'
+    if ((obj as THREE.Camera).isCamera) return 'Camera'
+    if ((obj as THREE.Bone).isBone) return 'Bone'
+    if (obj.type === 'Group') return 'Group'
+    return 'Object3D'
+  }
+
+  selectNode(uuid: string): void {
+    const obj = this.findObjectByUuid(uuid)
+    if (!obj) return
+    this.deselectNode()
+    this.selectedNode = obj
+    useViewerStore().selectNode(uuid)
+    this.highlightSelectedNode()
+  }
+
+  focusNode(uuid: string): void {
+    const obj = this.findObjectByUuid(uuid)
+    if (!obj) return
+    const box = new THREE.Box3().setFromObject(obj)
+    const center = box.getCenter(new THREE.Vector3())
+    const size = box.getSize(new THREE.Vector3())
+    const maxDim = Math.max(size.x, size.y, size.z, 0.01)
+    const distance = maxDim * 1.5
+    const offset = this.getCameraDirection().multiplyScalar(distance)
+    this.camera.position.copy(center).add(offset)
+    this.camera.lookAt(center)
+    this.orbit.controls.target.copy(center)
+    this.orbit.controls.update()
+    useLogStore().add('聚焦节点', 'success', 'user', obj.name || uuid)
+  }
+
+  setNodeVisibility(uuid: string, visible: boolean): void {
+    const obj = this.findObjectByUuid(uuid)
+    if (!obj) return
+    obj.traverse((o) => {
+      o.visible = visible
+    })
+  }
+
+  getModelStats(): ModelStats | null {
+    if (!this.currentModel) return null
+    let vertexCount = 0
+    let triangleCount = 0
+    let nodeCount = 0
+    let meshCount = 0
+    const materials = new Set<THREE.Material>()
+    const textures = new Set<THREE.Texture>()
+    this.currentModel.traverse((obj) => {
+      nodeCount++
+      const mesh = obj as THREE.Mesh
+      if (mesh.isMesh) {
+        meshCount++
+        const geometry = mesh.geometry
+        if (geometry.index) {
+          triangleCount += geometry.index.count / 3
+        } else {
+          triangleCount += geometry.attributes.position.count / 3
+        }
+        vertexCount += geometry.attributes.position.count
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+        mats.forEach((mat) => {
+          materials.add(mat)
+          this.collectTextures(mat, textures)
+        })
+      }
+    })
+    const fileSize = useViewerStore().modelInfo?.fileSize || 0
+    return {
+      vertexCount: Math.floor(vertexCount),
+      triangleCount: Math.floor(triangleCount),
+      nodeCount,
+      meshCount,
+      materialCount: materials.size,
+      textureCount: textures.size,
+      fileSize,
+    }
+  }
+
+  private collectTextures(material: THREE.Material, set: Set<THREE.Texture>): void {
+    const record = material as unknown as Record<string, unknown>
+    for (const key in record) {
+      const value = record[key]
+      if (value instanceof THREE.Texture) {
+        set.add(value)
+      }
+      if (Array.isArray(value)) {
+        value.forEach((v) => {
+          if (v instanceof THREE.Texture) set.add(v)
+        })
+      }
+    }
+  }
+
+  getNodeProperties(uuid: string): NodeProperties | null {
+    const obj = this.findObjectByUuid(uuid)
+    if (!obj) return null
+    const mesh = obj as THREE.Mesh
+    const materialNames: string[] = []
+    if (mesh.isMesh) {
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      mats.forEach((mat) => materialNames.push(mat.name || mat.type || '未命名材质'))
+    }
+    const worldPosition = new THREE.Vector3()
+    obj.getWorldPosition(worldPosition)
+    return {
+      uuid: obj.uuid,
+      name: obj.name || '未命名节点',
+      type: obj.type,
+      position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
+      rotation: { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
+      quaternion: { x: obj.quaternion.x, y: obj.quaternion.y, z: obj.quaternion.z, w: obj.quaternion.w },
+      scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z },
+      worldPosition: { x: worldPosition.x, y: worldPosition.y, z: worldPosition.z },
+      userData: { ...obj.userData },
+      materialNames: materialNames.length ? materialNames : undefined,
+    }
+  }
+
+  getNodeGeometryStats(uuid: string): { vertexCount: number; triangleCount: number } {
+    const obj = this.findObjectByUuid(uuid)
+    let vertexCount = 0
+    let triangleCount = 0
+    if (!obj) return { vertexCount, triangleCount }
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh
+      if (!mesh.isMesh) return
+      const geometry = mesh.geometry
+      if (geometry.index) {
+        triangleCount += geometry.index.count / 3
+      } else {
+        triangleCount += geometry.attributes.position.count / 3
+      }
+      vertexCount += geometry.attributes.position.count
+    })
+    return { vertexCount: Math.floor(vertexCount), triangleCount: Math.floor(triangleCount) }
+  }
+
+  private findObjectByUuid(uuid: string): THREE.Object3D | null {
+    if (!this.currentModel) return null
+    let found: THREE.Object3D | null = null
+    this.currentModel.traverse((obj) => {
+      if (obj.uuid === uuid) found = obj
+    })
+    return found
+  }
+
+  private highlightSelectedNode(): void {
+    if (!this.selectedNode) return
+    this.selectedNode.traverse((obj) => {
+      const mesh = obj as THREE.Mesh
+      if (!mesh.isMesh) return
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      mats.forEach((mat) => {
+        if (mat instanceof THREE.MeshStandardMaterial) {
+          if (!this.selectedNodeOriginalEmissive.has(mesh.uuid)) {
+            this.selectedNodeOriginalEmissive.set(mesh.uuid, {
+              color: mat.emissive.clone(),
+              intensity: mat.emissiveIntensity,
+            })
+          }
+          mat.emissive.set(0x00d4ff)
+          mat.emissiveIntensity = 0.6
+          mat.needsUpdate = true
+        }
+      })
+    })
+  }
+
+  private deselectNode(): void {
+    this.selectedNodeOriginalEmissive.forEach((stored, uuid) => {
+      const obj = this.findObjectByUuid(uuid)
+      if (!obj) return
+      const mesh = obj as THREE.Mesh
+      if (!mesh.isMesh) return
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      mats.forEach((mat) => {
+        if (mat instanceof THREE.MeshStandardMaterial) {
+          mat.emissive.copy(stored.color)
+          mat.emissiveIntensity = stored.intensity
+          mat.needsUpdate = true
+        }
+      })
+    })
+    this.selectedNodeOriginalEmissive.clear()
+    this.selectedNode = null
   }
 
   dispose(): void {
@@ -720,6 +1499,7 @@ export class BIMViewer {
     this.roaming.dispose()
     this.orbit.dispose()
     this.clipManager.dispose()
+    this.stopRegionZoom()
     this.postProcessing?.dispose()
     this.renderer.dispose()
     this.container.removeChild(this.renderer.domElement)

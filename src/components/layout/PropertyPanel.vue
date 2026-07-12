@@ -3,8 +3,9 @@
     v-if="settingsStore.general.propertyPanelVisible && viewerStore.selectedComponent"
     ref="panelRef"
     class="property-panel"
-    :style="dragStyle"
+    :style="{ ...dragStyle, ...resizeStyle }"
   >
+    <div class="panel-resize-handle" />
     <TechPanel title="构件属性">
       <template #extra>
         <span class="close-btn" @click="viewerStore.selectComponent(null)">✕</span>
@@ -63,6 +64,7 @@ import { useViewerStore } from '@/stores/viewerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { viewer } from '@/composables/useBIMViewer'
 import { useDraggable } from '@/composables/useDraggable'
+import { useResizable } from '@/composables/useResizable'
 import TechPanel from '@/components/common/TechPanel.vue'
 import TechSlider from '@/components/common/TechSlider.vue'
 import ColorPicker from '@/components/common/ColorPicker.vue'
@@ -71,6 +73,7 @@ const viewerStore = useViewerStore()
 const settingsStore = useSettingsStore()
 const panelRef = ref<HTMLElement | null>(null)
 const { style: dragStyle } = useDraggable(panelRef)
+const { style: resizeStyle } = useResizable(panelRef, { minWidth: 260, minHeight: 240 })
 
 const isHidden = ref(false)
 const opacity = ref(1)

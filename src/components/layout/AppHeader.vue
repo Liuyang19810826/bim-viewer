@@ -13,72 +13,164 @@
 
     <div class="header-actions">
       <input
-        ref="fileInput"
+        ref="glbInput"
+        type="file"
+        accept=".glb"
+        style="display: none"
+        @change="glbLoader.onFolderSelected"
+      />
+      <input
+        ref="gltfInput"
         type="file"
         multiple
-        accept=".gltf,.glb,.bin"
+        accept=".gltf,.bin"
         style="display: none"
-        @change="fileLoader.onFolderSelected"
-      />
-      <TechButton @click="onLoadModelClick">
-        <span>📁</span> 加载模型
-      </TechButton>
-      <TechButton :disabled="!viewerStore.modelLoaded" @click="resetView">
-        <span>↺</span> 重置视角
-      </TechButton>
-      <TechButton
-        :active="viewerStore.isClipping"
-        :disabled="!viewerStore.modelLoaded"
-        @click="toggleClipping"
-      >
-        <span>✂</span> {{ viewerStore.isClipping ? '关闭剖切' : '开启剖切' }}
-      </TechButton>
-      <TechButton
-        :active="viewerStore.isRoaming"
-        :disabled="!viewerStore.modelLoaded"
-        @click="toggleRoaming"
-      >
-        <span>🚶</span> {{ viewerStore.isRoaming ? '退出漫游' : '开启漫游' }}
-      </TechButton>
-
-      <PresetDropdown
-        v-if="viewerStore.modelLoaded"
-        v-model="currentPreset"
-        :options="presets"
-        placeholder="显示预设"
+        @change="gltfLoader.onFolderSelected"
       />
 
-      <TechButton @click="settingsStore.general.logPanelVisible = !settingsStore.general.logPanelVisible">
-        <span>📝</span> 日志
-      </TechButton>
-      <TechButton @click="showSettings = true">
-        <span>⚙</span> 设置
-      </TechButton>
-      <TechButton danger :disabled="!viewerStore.modelLoaded" @click="clearModel">
-        <span>🗑</span> 清空
-      </TechButton>
+      <div class="header-row header-row--primary">
+        <TechButton @click="glbLoader.openFolderPicker">
+          <span>📁</span> 加载 GLB
+        </TechButton>
+        <TechButton @click="gltfLoader.openFolderPicker">
+          <span>📁</span> 加载 GLTF
+        </TechButton>
+        <TechButton :disabled="!viewerStore.modelLoaded" @click="resetView">
+          <span>↺</span> 重置视角
+        </TechButton>
+        <TechButton @click="settingsStore.general.logPanelVisible = !settingsStore.general.logPanelVisible">
+          <span>📝</span> 日志
+        </TechButton>
+        <TechButton
+          :active="viewerStore.showModelStatsPanel"
+          :disabled="!viewerStore.modelLoaded"
+          @click="viewerStore.setShowModelStatsPanel(!viewerStore.showModelStatsPanel)"
+        >
+          <span>📊</span> 统计
+        </TechButton>
+        <TechButton
+          danger
+          :disabled="!viewerStore.modelLoaded"
+          @click="clearModel"
+        >
+          <span>🗑</span> 清空
+        </TechButton>
+        <TechButton
+          :active="viewerStore.showValidationPanel"
+          :disabled="!viewerStore.modelLoaded"
+          @click="viewerStore.setShowValidationPanel(!viewerStore.showValidationPanel)"
+        >
+          <span>✓</span> 校验
+        </TechButton>
+        <TechButton
+          :active="viewerStore.showPerformancePanel"
+          :disabled="!viewerStore.modelLoaded"
+          @click="viewerStore.setShowPerformancePanel(!viewerStore.showPerformancePanel)"
+        >
+          <span>📈</span> 性能
+        </TechButton>
+        <TechButton @click="showSettings = true">
+          <span>⚙</span> 设置
+        </TechButton>
+      </div>
+
+      <div class="header-row header-row--secondary">
+        <TechButton
+          :active="viewerStore.isClipping"
+          :disabled="!viewerStore.modelLoaded"
+          @click="toggleClipping"
+        >
+          <span>✂</span> {{ viewerStore.isClipping ? '关闭剖切' : '开启剖切' }}
+        </TechButton>
+        <TechButton
+          :active="viewerStore.isRoaming"
+          :disabled="!viewerStore.modelLoaded"
+          @click="toggleRoaming"
+        >
+          <span>🚶</span> {{ viewerStore.isRoaming ? '退出漫游' : '开启漫游' }}
+        </TechButton>
+        <TechButton
+          :active="settingsStore.general.floorPanelVisible"
+          :disabled="!viewerStore.modelLoaded"
+          @click="settingsStore.general.floorPanelVisible = !settingsStore.general.floorPanelVisible"
+        >
+          <span>🏢</span> 楼层
+        </TechButton>
+        <TechButton
+          :active="viewerStore.showSceneTreePanel"
+          :disabled="!viewerStore.modelLoaded"
+          @click="viewerStore.setShowSceneTreePanel(!viewerStore.showSceneTreePanel)"
+        >
+          <span>🌳</span> 场景树
+        </TechButton>
+        <TechButton
+          :active="viewerStore.showNodePropertiesPanel"
+          :disabled="!viewerStore.modelLoaded"
+          @click="viewerStore.setShowNodePropertiesPanel(!viewerStore.showNodePropertiesPanel)"
+        >
+          <span>📋</span> 属性
+        </TechButton>
+        <TechButton
+          :active="viewerStore.showMaterialPanel"
+          :disabled="!viewerStore.modelLoaded"
+          @click="viewerStore.setShowMaterialPanel(!viewerStore.showMaterialPanel)"
+        >
+          <span>🎨</span> 材质
+        </TechButton>
+        <TechButton
+          :active="viewerStore.showLightingPanel"
+          :disabled="!viewerStore.modelLoaded"
+          @click="viewerStore.setShowLightingPanel(!viewerStore.showLightingPanel)"
+        >
+          <span>💡</span> 光照
+        </TechButton>
+        <TechButton
+          :active="viewerStore.showPostProcessingPanel"
+          :disabled="!viewerStore.modelLoaded"
+          @click="viewerStore.setShowPostProcessingPanel(!viewerStore.showPostProcessingPanel)"
+        >
+          <span>✨</span> 后处理
+        </TechButton>
+        <TechButton
+          :active="viewerStore.showMeasurementPanel"
+          :disabled="!viewerStore.modelLoaded"
+          @click="toggleMeasurementPanel"
+        >
+          <span>📏</span> 测量
+        </TechButton>
+        <PresetDropdown
+          v-if="viewerStore.modelLoaded"
+          v-model="currentPreset"
+          :options="presets"
+          placeholder="显示预设"
+        />
+        <TechButton
+          :active="viewerStore.showRegionZoomPanel"
+          :disabled="!viewerStore.modelLoaded"
+          @click="viewerStore.setShowRegionZoomPanel(!viewerStore.showRegionZoomPanel)"
+        >
+          <span>🔍</span> 近景查看
+        </TechButton>
+        <TechButton
+          :active="viewerStore.humanEye.open"
+          :disabled="!viewerStore.modelLoaded"
+          @click="viewerStore.setHumanEyeOpen(!viewerStore.humanEye.open)"
+        >
+          <span>👁</span> 人视图
+        </TechButton>
+      </div>
     </div>
 
     <SettingsDrawer v-model="showSettings" />
-
-    <TechDialog
-      v-model="showLoadDialog"
-      title="加载模型提示"
-      @confirm="confirmLoadModel"
-    >
-      <p>请选择模型文件，支持 <strong>.gltf / .glb / .bin</strong> 格式。</p>
-      <p>若模型资源分散在文件夹中，可在文件选择框中进入文件夹并多选所有相关文件。</p>
-    </TechDialog>
   </header>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed } from 'vue'
 import { useViewerStore } from '@/stores/viewerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { MODE_LABELS } from '@/utils/constants'
 import TechButton from '@/components/common/TechButton.vue'
-import TechDialog from '@/components/common/TechDialog.vue'
 import PresetDropdown from '@/components/common/PresetDropdown.vue'
 import SettingsDrawer from '@/components/settings/SettingsDrawer.vue'
 import { useFileLoader } from '@/composables/useFileLoader'
@@ -88,10 +180,11 @@ import type { RenderPreset } from '@/types'
 const viewerStore = useViewerStore()
 const settingsStore = useSettingsStore()
 const showSettings = ref(false)
-const showLoadDialog = ref(false)
-const fileInput = ref<HTMLInputElement | null>(null)
+const glbInput = ref<HTMLInputElement | null>(null)
+const gltfInput = ref<HTMLInputElement | null>(null)
 
-const fileLoader = useFileLoader(fileInput)
+const glbLoader = useFileLoader(glbInput)
+const gltfLoader = useFileLoader(gltfInput)
 
 const presets: { key: RenderPreset; name: string }[] = [
   { key: 'solid', name: '实体着色' },
@@ -111,16 +204,6 @@ const currentPreset = computed({
   },
 })
 
-function onLoadModelClick() {
-  showLoadDialog.value = true
-}
-
-function confirmLoadModel() {
-  nextTick(() => {
-    fileLoader.openFolderPicker()
-  })
-}
-
 function resetView() {
   viewer.value?.resetView()
 }
@@ -135,6 +218,14 @@ function toggleRoaming() {
 
 function clearModel() {
   viewer.value?.clearModel()
+}
+
+function toggleMeasurementPanel() {
+  const next = !viewerStore.showMeasurementPanel
+  viewerStore.setShowMeasurementPanel(next)
+  if (!next) {
+    viewer.value?.stopMeasurement()
+  }
 }
 </script>
 
@@ -205,9 +296,34 @@ function clearModel() {
 }
 
 .header-actions {
+  flex: 1;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
 }
 
+.header-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.app-header .tech-button {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.app-header :deep(.preset-dropdown .dropdown-trigger) {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+}
 </style>

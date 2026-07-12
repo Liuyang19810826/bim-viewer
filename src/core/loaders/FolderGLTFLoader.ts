@@ -1,11 +1,13 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { validateGLTFBinFiles } from '@/utils/fileUtils'
-import type { LoadProgress, ModelInfo } from '@/types'
+import { validateGLTFFile } from '@/utils/gltfValidator'
+import type { LoadProgress, ModelInfo, ValidationReport } from '@/types'
 
 export interface FolderLoadResult {
   scene: THREE.Group
   info: ModelInfo
+  validation?: ValidationReport
 }
 
 export class FolderGLTFLoader {
@@ -25,8 +27,10 @@ export class FolderGLTFLoader {
 
     const manager = new THREE.LoadingManager()
     manager.setURLModifier((url) => {
-      const fileName = url.split('/').pop() || url
-      return fileMap.get(fileName) || url
+      const rawName = url.split('/').pop() || url
+      // glTF may URL-encode non-ASCII filenames in buffer URIs (e.g. %E8%A5%BF...)
+      const decodedName = decodeURIComponent(rawName)
+      return fileMap.get(decodedName) || fileMap.get(rawName) || url
     })
 
     const loader = new GLTFLoader(manager)
@@ -36,7 +40,7 @@ export class FolderGLTFLoader {
 
       loader.load(
         gltfUrl,
-        (gltf: { scene: THREE.Group }) => {
+        async (gltf: { scene: THREE.Group }) => {
           URL.revokeObjectURL(gltfUrl)
 
           const scene = gltf.scene
@@ -59,6 +63,11 @@ export class FolderGLTFLoader {
             }
           })
 
+          const fileSize = files.reduce((sum, file) => sum + file.size, 0)
+
+          const isGltf = validation.gltfFile!.name.toLowerCase().endsWith('.gltf')
+          const validationReport = isGltf ? await validateGLTFFile(validation.gltfFile!, files) : undefined
+
           resolve({
             scene,
             info: {
@@ -66,7 +75,9 @@ export class FolderGLTFLoader {
               componentCount,
               vertexCount,
               triangleCount: Math.floor(triangleCount),
+              fileSize,
             },
+            validation: validationReport,
           })
         },
         (event: ProgressEvent<EventTarget>) => {
